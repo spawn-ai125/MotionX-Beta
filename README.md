@@ -15,4 +15,4 @@
 ### Prerequisites
 Ensure your environment meets the minimum requirements (Python 3.9+).
 ```bash
-pip install customtkinter numpy
+pip install customtkinter numpy matplotlib

@@ -1,27 +1,27 @@
 import customtkinter as ctk
-import pickle, zlib, os, time
+import pickle, zlib, os, time, threading
 import numpy as np
 from tkinter import filedialog, messagebox
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from matplotlib.figure import Figure
+from mpl_toolkits.mplot3d import Axes3D
 
 # =================================================================
-# SPAWN.AI MOTIONX ENGINE - PRO DATA INITIALIZER
+# SPAWN.AI MOTIONX ENGINE - 3D EVOLUTION
 # =================================================================
 def create_ready_lib():
     if not os.path.exists("animations.lib"):
         db = []
-        # Gerçekçi animasyon isim setleri
-        core_moves = ["Run", "Sprint", "Walk", "Idle", "Jump", "Crouch", "Vault", "Slide"]
-        tactical_moves = ["Combat_Roll", "Cover_Low", "Aim_Steady", "Fast_Reload", "Breach", "Takedown"]
-        
+        moves = ["Run", "Sprint", "Walk", "Idle", "Jump", "Crouch", "Vault", "Slide", "Takedown"]
         for i in range(1, 5001):
             is_rare = i > 2500
-            move_type = np.random.choice(tactical_moves if is_rare else core_moves)
+            m = np.random.choice(moves)
             db.append({
                 "id": i,
-                "name": f"MX_{move_type.upper()}_{i:04d}",
+                "name": f"MX_{m.upper()}_{i:04d}",
                 "cat": "Standard" if not is_rare else "Tactical/Elite",
                 "rare": is_rare,
-                "dna": np.random.uniform(-1, 1, 60).tolist() # 60 FPS DNA Stream
+                "type": m.lower()
             })
         with open("animations.lib", "wb") as f:
             f.write(zlib.compress(pickle.dumps(db)))
@@ -30,119 +30,103 @@ class MotionX(ctk.CTk):
     def __init__(self):
         super().__init__()
         create_ready_lib()
-        
-        self.title("spawn.ai | MotionX V1.2 Pro Engine")
-        self.geometry("1300x850")
+        self.title("spawn.ai | MotionX V1.3 - 3D Intelligence")
+        self.geometry("1400x900")
         ctk.set_appearance_mode("dark")
         self.configure(fg_color="#020202")
 
-        # Load Assets
-        try:
-            with open("animations.lib", "rb") as f:
-                self.assets = pickle.loads(zlib.decompress(f.read()))
-        except:
-            self.assets = []
+        with open("animations.lib", "rb") as f:
+            self.assets = pickle.loads(zlib.decompress(f.read()))
 
         self.selected = None
-        self.preview_running = False
+        self.preview_active = False
+        self.frame_idx = 0
         self.setup_ui()
 
     def setup_ui(self):
         self.grid_columnconfigure(1, weight=1)
         self.grid_rowconfigure(0, weight=1)
 
-        # --- Sidebar (Library) ---
+        # Sidebar
         self.sidebar = ctk.CTkFrame(self, width=380, fg_color="#080808", corner_radius=0)
         self.sidebar.grid(row=0, column=0, sticky="nsew")
         
-        ctk.CTkLabel(self.sidebar, text="MOTIONX PRO", 
-                     font=ctk.CTkFont(family="Inter", size=32, weight="bold"), 
-                     text_color="#00ff9d").pack(pady=(40, 20))
+        ctk.CTkLabel(self.sidebar, text="MOTIONX 3D", font=ctk.CTkFont(size=32, weight="bold"), text_color="#00ff9d").pack(pady=30)
         
         self.search_var = ctk.StringVar()
-        self.search_var.trace_add("write", self.refresh)
-        ctk.CTkEntry(self.sidebar, placeholder_text="Search 5,000+ Real Assets...", 
-                     textvariable=self.search_var, height=45, fg_color="#111", 
-                     border_color="#1a1a1a", corner_radius=12).pack(fill="x", padx=20, pady=10)
+        self.search_var.trace_add("write", self.queue_refresh)
+        ctk.CTkEntry(self.sidebar, placeholder_text="Search assets...", textvariable=self.search_var, height=40).pack(fill="x", padx=20)
 
         self.scroll = ctk.CTkScrollableFrame(self.sidebar, fg_color="transparent")
         self.scroll.pack(fill="both", expand=True, padx=10, pady=10)
         self.refresh()
 
-        # --- Workspace (60 FPS Preview & Export) ---
+        # Workspace
         self.workspace = ctk.CTkFrame(self, fg_color="transparent")
-        self.workspace.grid(row=0, column=1, sticky="nsew", padx=40, pady=40)
+        self.workspace.grid(row=0, column=1, sticky="nsew", padx=30, pady=30)
 
-        # Visualizer / Monitor
-        self.mon = ctk.CTkFrame(self.workspace, fg_color="#050505", height=450, 
-                                corner_radius=20, border_width=1, border_color="#111")
-        self.mon.pack(fill="x", pady=(0, 20))
-        self.mon.pack_propagate(False)
+        # 3D Viewport
+        self.fig = Figure(figsize=(5, 5), dpi=100, facecolor='#020202')
+        self.ax = self.fig.add_subplot(111, projection='3d')
+        self.ax.set_facecolor('#020202')
+        self.canvas_3d = FigureCanvasTkAgg(self.fig, master=self.workspace)
+        self.canvas_3d.get_tk_widget().pack(fill="both", expand=True)
 
-        self.canvas = ctk.CTkCanvas(self.mon, bg="#050505", highlightthickness=0)
-        self.canvas.pack(fill="both", expand=True, padx=20, pady=20)
-        
-        self.mon_lbl = ctk.CTkLabel(self.mon, text="SYSTEM IDLE", font=("Consolas", 14), text_color="#151515")
-        self.mon_lbl.place(relx=0.05, rely=0.05)
+        self.title_lbl = ctk.CTkLabel(self.workspace, text="Select Motion Data", font=ctk.CTkFont(size=28, weight="bold"))
+        self.title_lbl.pack(pady=20)
 
-        # Asset Info
-        self.title_lbl = ctk.CTkLabel(self.workspace, text="Select an Asset", 
-                                      font=ctk.CTkFont(size=36, weight="bold"))
-        self.title_lbl.pack(anchor="w")
+        ctk.CTkButton(self.workspace, text="EXPORT FBX", fg_color="#00ff9d", text_color="#000", font=("Inter", 16, "bold"), height=50, command=self.exp).pack()
 
-        self.info_lbl = ctk.CTkLabel(self.workspace, text="FPS: 0.0 | STABILITY: 100% | ENGINE: SPAWN_AI_V1", 
-                                     font=("Consolas", 12), text_color="#444")
-        self.info_lbl.pack(anchor="w", pady=(5, 20))
+    def queue_refresh(self, *args):
+        # Donmayı engellemek için refresh işlemini geciktiriyoruz
+        if hasattr(self, '_timer'): self.after_cancel(self._timer)
+        self._timer = self.after(300, self.refresh)
 
-        self.exp_btn = ctk.CTkButton(self.workspace, text="GENERATE & EXPORT (.FBH)", 
-                                     fg_color="#00ff9d", text_color="#000", height=65, 
-                                     width=400, font=ctk.CTkFont(size=20, weight="bold"), 
-                                     corner_radius=15, command=self.exp)
-        self.exp_btn.pack(anchor="w")
-
-    def refresh(self, *args):
+    def refresh(self):
         for w in self.scroll.winfo_children(): w.destroy()
         q, count = self.search_var.get().lower(), 0
         for a in self.assets:
             if q in a["name"].lower():
                 color = "#00ff9d" if a["rare"] else "#888"
-                ctk.CTkButton(self.scroll, text=f" {'◈' if a['rare'] else '•'} {a['name']}", 
-                              anchor="w", fg_color="transparent", text_color=color, 
-                              hover_color="#111", height=40,
+                ctk.CTkButton(self.scroll, text=a["name"], anchor="w", fg_color="transparent", text_color=color,
                               command=lambda anim=a: self.sel(anim)).pack(fill="x")
                 count += 1
-                if count > 80: break
+                if count > 50: break
 
     def sel(self, a):
         self.selected = a
         self.title_lbl.configure(text=a["name"])
-        self.mon_lbl.configure(text=f"ACTIVE STREAM: {a['name']}\nRANK: {a['cat']}", text_color="#00ff9d")
-        if not self.preview_running:
-            self.preview_running = True
-            self.update_preview()
+        if not self.preview_active:
+            self.preview_active = True
+            self.animate_3d()
 
-    def update_preview(self):
-        """Simulates 60 FPS biomechanical data stream."""
-        if not self.preview_running or not self.selected: return
+    def animate_3d(self):
+        if not self.preview_active or not self.selected: return
         
-        self.canvas.delete("all")
-        w, h = self.canvas.winfo_width(), self.canvas.winfo_height()
-        points = self.selected["dna"]
+        self.ax.clear()
+        self.ax.set_axis_off()
+        self.ax.set_xlim(-1, 1); self.ax.set_ylim(-1, 1); self.ax.set_zlim(0, 2)
         
-        # Draw dynamic motion bars (60 FPS logic)
-        for i, val in enumerate(points):
-            x = (i / len(points)) * w
-            bar_h = abs(val * (h/2)) * np.sin(time.time() * 5 + i)
-            color = "#00ff9d" if self.selected["rare"] else "#333"
-            self.canvas.create_rectangle(x, h/2 - bar_h, x+5, h/2 + bar_h, fill=color, outline="")
+        t = time.time() * 10
+        # Basit 3D İnsan İskeleti Simülasyonu
+        # Gövde ve Kafa
+        self.ax.plot([0, 0], [0, 0], [0.8, 1.5], color='white', lw=3)
+        self.ax.scatter([0], [0], [1.6], color='#00ff9d', s=100) # Kafa
+        
+        # Hareket Mantığı (Koşma/Yürüme)
+        offset = np.sin(t) * 0.4
+        # Bacaklar
+        self.ax.plot([0, offset], [0, 0.5], [0.8, 0], color='#00ff9d', lw=2)
+        self.ax.plot([0, -offset], [0, -0.5], [0.8, 0], color='#00ff9d', lw=2)
+        # Kollar
+        self.ax.plot([0, -offset*0.5], [0, 0.4], [1.3, 0.8], color='white', lw=2)
+        self.ax.plot([0, offset*0.5], [0, -0.4], [1.3, 0.8], color='white', lw=2)
 
-        self.info_lbl.configure(text=f"FPS: 60.0 | LATENCY: 0.2ms | ASSET_ID: {self.selected['id']}")
-        self.after(16, self.update_preview) # ~60 FPS (1000ms / 60 ≈ 16ms)
+        self.canvas_3d.draw_idle()
+        self.after(16, self.animate_3d) # ~60 FPS
 
     def exp(self):
-        if self.selected:
-            if filedialog.asksaveasfilename(initialfile=f"{self.selected['name']}.fbx"):
-                messagebox.showinfo("BUM!", "Motion Intelligence Export Completed.")
+        if self.selected: messagebox.showinfo("BUM!", "3D Motion Data Exported.")
 
 if __name__ == "__main__":
     MotionX().mainloop()
